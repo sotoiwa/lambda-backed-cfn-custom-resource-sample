@@ -197,7 +197,6 @@ Resources:
                       instance_id = ''
                       for reservation in response['Reservations']:
                           for instance in reservation['Instances']:
-                              pprint.pprint(instance)
                               try:
                                   for tag in instance['Tags']:
                                       if tag['Key'] == 'aws:cloud9:environment':
