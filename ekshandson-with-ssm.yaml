@@ -87,10 +87,14 @@ Resources:
                       instance_id = ''
                       for reservation in response['Reservations']:
                           for instance in reservation['Instances']:
-                              for tag in instance['Tags']:
-                                  if tag['Key'] == 'aws:cloud9:environment':
-                                      if tag['Value'] == cloud9_environment:
-                                          instance_id = instance['InstanceId']
+                              pprint.pprint(instance)
+                              try:
+                                  for tag in instance['Tags']:
+                                      if tag['Key'] == 'aws:cloud9:environment':
+                                          if tag['Value'] == cloud9_environment:
+                                              instance_id = instance['InstanceId']
+                              except KeyError:
+                                  pass
                       print(instance_id)
                       response = iam_client.list_instance_profiles()
                       instance_profile_name = ''
@@ -193,10 +197,14 @@ Resources:
                       instance_id = ''
                       for reservation in response['Reservations']:
                           for instance in reservation['Instances']:
-                              for tag in instance['Tags']:
-                                  if tag['Key'] == 'aws:cloud9:environment':
-                                      if tag['Value'] == cloud9_environment:
-                                          instance_id = instance['InstanceId']
+                              pprint.pprint(instance)
+                              try:
+                                  for tag in instance['Tags']:
+                                      if tag['Key'] == 'aws:cloud9:environment':
+                                          if tag['Value'] == cloud9_environment:
+                                              instance_id = instance['InstanceId']
+                              except KeyError:
+                                  pass
                       print(instance_id)
                       ssm_document_name = event['ResourceProperties']['SSMDocumentName']
                       print(ssm_document_name)
