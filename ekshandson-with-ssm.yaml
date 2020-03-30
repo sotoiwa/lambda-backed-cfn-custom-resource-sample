@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  ########################################
+  # DynamoDB
+  ########################################
+  MyDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      # TableName: messages
+      AttributeDefinitions:
+        - AttributeName: uuid
+          AttributeType: S
+      KeySchema:
+        - AttributeName: uuid
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  ########################################
+  # Cloud9
+  ########################################
+  MyCloud9Role:
+    Type: AWS::IAM::Role
+    Properties:
+      # RoleName: MyCloud9InstanceRole
+      Path: "/"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+  MyCloud9InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      # InstanceProfileName: MyCloud9InstanceRole
+      Path: "/"
+      Roles:
+        - !Ref MyCloud9Role
+  MyCloud9:
+    Type: AWS::Cloud9::EnvironmentEC2
+    Properties:
+      AutomaticStopTimeMinutes: 50
+      InstanceType: t3.small
+      # Name: MyCloud9
+      # OwnerArn: !Sub arn:aws:sts::${AWS::AccountId}:assumed-role/TeamRole/MasterKey
+  MyAttachRoleResource:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt MyAttachRoleFunction.Arn
+      InstanceProfileArn: !GetAtt MyCloud9InstanceProfile.Arn
+      Cloud9Environment: !Ref MyCloud9
+    DependsOn:
+      - MyCloud9
+      - MyCloud9InstanceProfile
+      - MyAttachRoleFunction
+  MyAttachRoleFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt MyAttachRoleFunctionExecutionRole.Arn
+      Runtime: python3.7
+      Timeout: 60
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              try:
+                  print(event)
+                  print(context)
+                  cloud9_environment = event['ResourceProperties']['Cloud9Environment']
+                  print(cloud9_environment)
+                  instance_profile_arn = event['ResourceProperties']['InstanceProfileArn']
+                  print(instance_profile_arn)
+                  if event['RequestType'] == 'Create':
+                      ec2_client = boto3.client('ec2')
+                      iam_client = boto3.client('iam')
+                      response = ec2_client.describe_instances()
+                      print(response)
+                      instance_id = ''
+                      for reservation in response['Reservations']:
+                          for instance in reservation['Instances']:
+                              for tag in instance['Tags']:
+                                  if tag['Key'] == 'aws:cloud9:environment':
+                                      if tag['Value'] == cloud9_environment:
+                                          instance_id = instance['InstanceId']
+                      print(instance_id)
+                      response = iam_client.list_instance_profiles()
+                      instance_profile_name = ''
+                      for instance_profile in response['InstanceProfiles']:
+                          if instance_profile['Arn'] == instance_profile_arn:
+                              instance_profile_name = instance_profile['InstanceProfileName']
+                      print(instance_profile_name)
+                      response_data = ec2_client.associate_iam_instance_profile(
+                          IamInstanceProfile={
+                              'Arn': instance_profile_arn,
+                              'Name': instance_profile_name
+                          },
+                          InstanceId=instance_id
+                      )
+                      print(response_data)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+  MyAttachRoleFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:AssociateIamInstanceProfile
+              - iam:ListInstanceProfiles
+              - iam:PassRole
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "arn:aws:logs:*:*:*"
+  ########################################
+  # SSM
+  ########################################
+  MyCreateClusterDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType : Command
+      Content:
+        schemaVersion: '2.2'
+        parameters: {}
+        mainSteps:
+        - action: aws:runShellScript
+          name: test
+          inputs:
+            runCommand:
+            - whoami >> /tmp/test.txt
+            - pwd >> /tmp/test.txt
+  MyRunCommandResource:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt MyRunCommandFunction.Arn
+      SSMDocumentName: !Ref MyCreateClusterDocument
+      Cloud9Environment: !Ref MyCloud9
+    DependsOn:
+      - MyAttachRoleResource
+      - MyRunCommandFunction
+  MyRunCommandFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt MyRunCommandFunctionExecutionRole.Arn
+      Runtime: python3.7
+      Timeout: 600
+      Code:
+        ZipFile: !Sub |
+          import time
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              try:
+                  print(event)
+                  print(context)
+                  if event['RequestType'] == 'Create':
+                      cloud9_environment = event['ResourceProperties']['Cloud9Environment']
+                      print(cloud9_environment)
+                      ec2_client = boto3.client('ec2')
+                      response = ec2_client.describe_instances()
+                      instance_id = ''
+                      for reservation in response['Reservations']:
+                          for instance in reservation['Instances']:
+                              for tag in instance['Tags']:
+                                  if tag['Key'] == 'aws:cloud9:environment':
+                                      if tag['Value'] == cloud9_environment:
+                                          instance_id = instance['InstanceId']
+                      print(instance_id)
+                      ssm_document_name = event['ResourceProperties']['SSMDocumentName']
+                      print(ssm_document_name)
+                      ssm_client = boto3.client('ssm')
+                      while True:
+                          response = ssm_client.describe_instance_information()
+                          print(response)
+                          for instance in response['InstanceInformationList']:
+                              if instance['InstanceId'] == instance_id:
+                                  break
+                          else:
+                              time.sleep(10)
+                              continue
+                          break
+                      response_data = ssm_client.send_command(
+                          InstanceIds=[
+                              instance_id
+                          ],
+                          DocumentName=ssm_document_name,
+                          CloudWatchOutputConfig={
+                              'CloudWatchOutputEnabled': True
+                          }
+                      )
+                      print(response_data)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+  MyRunCommandFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ssm:DescribeInstanceInformation
+              - ssm:SendCommand
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "arn:aws:logs:*:*:*"
