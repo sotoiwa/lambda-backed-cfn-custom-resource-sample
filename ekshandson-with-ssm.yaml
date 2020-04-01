@@ -87,7 +87,6 @@ Resources:
                       instance_id = ''
                       for reservation in response['Reservations']:
                           for instance in reservation['Instances']:
-                              pprint.pprint(instance)
                               try:
                                   for tag in instance['Tags']:
                                       if tag['Key'] == 'aws:cloud9:environment':
@@ -159,11 +158,71 @@ Resources:
         parameters: {}
         mainSteps:
         - action: aws:runShellScript
-          name: test
+          name: awscli
           inputs:
             runCommand:
-            - whoami >> /tmp/test.txt
-            - pwd >> /tmp/test.txt
+            - whoami
+            - pwd
+            - su - ec2-user -c "aws --version"
+            - pip install awscli
+            - su - ec2-user -c "aws --version"
+            - !Sub su - ec2-user -c "aws configure set default.region ${AWS::Region}"
+            - su - ec2-user -c "aws configure get default.region"
+            - su - ec2-user -c "aws sts get-caller-identity"
+        - action: aws:runShellScript
+          name: eksctl
+          inputs:
+            runCommand:
+            - curl -s -L -o /usr/local/bin/kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.15.10/2020-02-22/bin/linux/amd64/kubectl
+            - chmod +x /usr/local/bin/kubectl
+            - curl -s -L "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+            - mv /tmp/eksctl /usr/local/bin
+        - action: aws:runShellScript
+          name: tools
+          inputs:
+            runCommand:
+            - yum -y install jq bash-completion
+            - curl -L https://raw.githubusercontent.com/docker/cli/master/contrib/completion/bash/docker -o /etc/bash_completion.d/docker
+            - curl -L "https://github.com/docker/compose/releases/download/1.25.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            - chmod +x /usr/local/bin/docker-compose
+            - curl -L https://raw.githubusercontent.com/docker/compose/1.25.4/contrib/completion/bash/docker-compose -o /etc/bash_completion.d/docker-compose
+            - kubectl completion bash > /tmp/kubectl_completion
+            - mv /tmp/kubectl_completion /etc/bash_completion.d/kubectl
+            - eksctl completion bash > /tmp/eksctl_completion
+            - mv /tmp/eksctl_completion /etc/bash_completion.d/eksctl
+            - |
+              cat <<"EOT" >> /home/ec2-user/.bash_profile
+
+              alias k="kubectl"
+              complete -o default -F __start_kubectl k
+              EOT
+            - su - ec2-user -c "git clone https://github.com/jonmosco/kube-ps1.git ~/.kube-ps1"
+            - |
+              cat <<"EOT" >> /home/ec2-user/.bash_profile
+
+              source ~/.kube-ps1/kube-ps1.sh
+              function get_cluster_short() {
+                echo "$1" | cut -d . -f1
+              }
+              KUBE_PS1_CLUSTER_FUNCTION=get_cluster_short
+              KUBE_PS1_SUFFIX=') '
+              PS1='$(kube_ps1)'$PS1
+              EOT
+            - su - ec2-user -c "git clone https://github.com/ahmetb/kubectx.git ~/.kubectx"
+            - ln -sf /home/ec2-user/.kubectx/completion/kubens.bash /etc/bash_completion.d/kubens
+            - ln -sf /home/ec2-user/.kubectx/completion/kubectx.bash /etc/bash_completion.d/kubectx
+            - |
+              cat <<"EOT" >> /home/ec2-user/.bash_profile
+
+              export PATH=~/.kubectx:$PATH
+              EOT
+            - curl -L https://github.com/wercker/stern/releases/download/1.11.0/stern_linux_amd64 -o /usr/local/bin/stern
+            - chmod +x /usr/local/bin/stern
+        - action: aws:runShellScript
+          name: cluster
+          inputs:
+            runCommand:
+            - !Sub su - ec2-user -c "eksctl create cluster --name=ekshandson --nodes=3 --managed --version 1.15 --region ${AWS::Region} --zones ${AWS::Region}a,${AWS::Region}c"
   MyRunCommandResource:
     Type: Custom::CustomResource
     Properties:
@@ -182,7 +241,6 @@ Resources:
       Timeout: 600
       Code:
         ZipFile: !Sub |
-          import time
           import boto3
           import cfnresponse
           def handler(event, context):
