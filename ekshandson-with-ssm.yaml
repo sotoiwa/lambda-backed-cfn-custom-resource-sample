@@ -75,11 +75,11 @@ Resources:
               try:
                   print(event)
                   print(context)
-                  cloud9_environment = event['ResourceProperties']['Cloud9Environment']
-                  print(cloud9_environment)
-                  instance_profile_arn = event['ResourceProperties']['InstanceProfileArn']
-                  print(instance_profile_arn)
                   if event['RequestType'] == 'Create':
+                      cloud9_environment = event['ResourceProperties']['Cloud9Environment']
+                      print(cloud9_environment)
+                      instance_profile_arn = event['ResourceProperties']['InstanceProfileArn']
+                      print(instance_profile_arn)
                       ec2_client = boto3.client('ec2')
                       iam_client = boto3.client('iam')
                       response = ec2_client.describe_instances()
