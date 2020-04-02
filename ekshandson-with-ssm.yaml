@@ -241,6 +241,7 @@ Resources:
       Timeout: 600
       Code:
         ZipFile: !Sub |
+          import time
           import boto3
           import cfnresponse
           def handler(event, context):
